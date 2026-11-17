@@ -1,117 +1,136 @@
-// The wanted system and the Sundara Bay police: crime points raise stars,
-// stars bring patrol cars, patrol cars chase and ram, and standing too close
-// to an officer on foot fills the bust meter. Stay unseen and the heat fades.
+// police.js — sistem wanted berbasis saksi (heat -> bintang) dan AI polisi:
+// patroli datang dari jauh, mengejar lewat jaringan jalan, mendekat langsung
+// saat pemain terlihat, dan mengisi meter tangkap bila pemain terpojok.
 
-import { CAR, CAR_MODELS, WANTED } from './config.js';
-import { makeCar } from './cars.js';
-import { angleLerp, resolveCircle } from './world.js';
+import { WANTED } from './config.js';
+import { makeCar, turnToward, approach } from './cars.js';
+import { collideCircle, nearestNode, randomRoadPoint, dist2 } from './world.js';
 
-const POLICE_MODEL = { name: 'Patroli Bayu', speed: 1.06, colors: ['#2b50c8'] };
-
-/** Create the wanted/police state block. */
-export function createPoliceState() {
-  return {
-    points: 0, stars: 0, unseenTime: 0, bustMeter: 0,
-    cars: [], sirenCd: 0, seenNow: false,
-  };
-}
-
-/** Stars for a points total: one star per point, capped. */
-export function starsFor(points) {
-  return Math.max(0, Math.min(WANTED.maxStars, Math.floor(points)));
-}
-
-/**
- * Report a crime. `severity` is in points (a star each). Witnesses decide how
- * much lands: full when a police car is close, half when only citizens see,
- * a whisper when nobody is watching. Returns the points actually added.
- */
-export function commitCrime(state, severity, witnessed) {
-  const factor = witnessed === 'police' ? 1 : witnessed === 'ped' ? 0.6 : 0.25;
-  state.points += severity * factor;
-  state.stars = starsFor(state.points);
-  if (factor >= 0.6) state.unseenTime = 0;
-  return severity * factor;
-}
-
-/** How many patrol cars a star level keeps on the street. */
-function desiredCars(stars) {
-  return stars <= 0 ? 0 : Math.min(4, stars + 1);
-}
-
-/** Spawn or retire patrol cars to match the wanted level, off-screen if possible. */
-export function syncPolice(state, player, random) {
-  const want = desiredCars(state.stars);
-  while (state.cars.length < want) {
-    const a = random.range(0, Math.PI * 2);
-    const dist = random.range(520, 720);
-    const car = makeCar(
-      Math.max(60, Math.min(2900, player.x + Math.cos(a) * dist)),
-      Math.max(60, Math.min(2340, player.y + Math.sin(a) * dist)),
-      0, POLICE_MODEL, '#2b50c8', 'police',
-    );
-    car.cruise = 300;
-    state.cars.push(car);
+export class Wanted {
+  constructor() {
+    this.heat = 0;
+    this.sinceCrime = 99;  // detik sejak kejahatan terakhir
+    this.sinceSeen = 99;   // detik sejak terakhir terlihat polisi
   }
-  while (state.cars.length > want) state.cars.pop();
+  get stars() {
+    if (this.heat <= 0) return 0;
+    return Math.min(5, Math.ceil(this.heat / WANTED.perStar));
+  }
+  add(amount) {
+    this.heat = Math.min(WANTED.maxHeat, this.heat + amount);
+    this.sinceCrime = 0;
+  }
+  markSeen() { this.sinceSeen = 0; }
+  update(dt) {
+    this.sinceCrime += dt;
+    this.sinceSeen += dt;
+    if (this.sinceCrime > WANTED.decayDelay && this.sinceSeen > 2.5) {
+      this.heat = Math.max(0, this.heat - WANTED.decayRate * dt);
+    }
+  }
+  clear() { this.heat = 0; this.sinceCrime = 99; this.sinceSeen = 99; }
 }
 
-/**
- * Advance the whole police picture one step: visibility, decay, chases and
- * the bust meter. Sets state.seenNow and returns events {siren, ram}.
- */
-export function updatePolice(state, player, inCar, city, dt, events) {
-  // Visibility: any patrol car with line-of-sight range on the player.
-  let seen = false;
-  for (const cop of state.cars) {
-    if (Math.hypot(cop.x - player.x, cop.y - player.y) < 330) { seen = true; break; }
+function desiredPolice(stars) {
+  return stars === 0 ? 0 : Math.min(6, 1 + stars);
+}
+
+function policeTopSpeed(stars) {
+  return Math.min(338, 226 + stars * 24);
+}
+
+export function stepPolice(state, dt) {
+  const wanted = state.wanted;
+  const p = state.player;
+  const px = p.car ? p.car.x : p.x;
+  const py = p.car ? p.car.y : p.y;
+  const stars = wanted.stars;
+
+  // Terlihat? polisi mana pun dalam jangkauan pandang.
+  let anyNear = false;
+  for (const cop of state.police) {
+    if (dist2(cop.x, cop.y, px, py) < WANTED.seenRange * WANTED.seenRange) { anyNear = true; break; }
   }
-  state.seenNow = seen;
-  if (seen) state.unseenTime = 0;
-  else {
-    state.unseenTime += dt;
-    if (state.unseenTime > WANTED.decayDelay && state.points > 0) {
-      state.points = Math.max(0, state.points - WANTED.decayRate * dt * 10);
-      state.stars = starsFor(state.points);
+  if (anyNear) wanted.markSeen();
+
+  // Spawn / despawn menjaga jumlah sesuai bintang.
+  state.policeTimer -= dt;
+  if (state.police.length < desiredPolice(stars) && state.policeTimer <= 0) {
+    state.policeTimer = 1.6;
+    const spot = randomRoadPoint(state.rng);
+    if (dist2(spot.x, spot.y, px, py) > 640 * 640) {
+      const cop = makeCar('police', spot.x, spot.y, 0);
+      cop.cruise = policeTopSpeed(stars);
+      cop.target = nearestNode(px, py);
+      state.police.push(cop);
+      state.allCars.push(cop);
+    }
+  }
+  if (stars === 0) {
+    for (let i = state.police.length - 1; i >= 0; i--) {
+      const cop = state.police[i];
+      if (dist2(cop.x, cop.y, px, py) > 780 * 780) removeCop(state, i);
     }
   }
 
-  state.sirenCd = Math.max(0, state.sirenCd - dt);
-  if (state.stars > 0 && state.cars.length > 0 && state.sirenCd <= 0) {
-    events.siren = true;
-    state.sirenCd = 3.4;
-  }
-
+  // Gerak tiap mobil polisi + logika tangkap.
   let busting = false;
-  for (const cop of state.cars) {
-    if (cop.dead) continue;
-    const dx = player.x - cop.x;
-    const dy = player.y - cop.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const wantAngle = Math.atan2(dy, dx);
-    cop.angle = angleLerp(cop.angle, wantAngle, Math.min(1, dt * 2.2));
-    const topSpeed = (240 + state.stars * 45) * (inCar ? 1.12 : 0.8);
-    const target = dist > 46 ? topSpeed : 0;
-    cop.speed += Math.sign(target - cop.speed) * Math.min(Math.abs(target - cop.speed), 300 * dt);
-    cop.x += Math.cos(cop.angle) * cop.speed * dt;
-    cop.y += Math.sin(cop.angle) * cop.speed * dt;
-    if (resolveCircle(city, cop, CAR.radius)) cop.speed *= 0.4;
-    // A close patrol car on a player on foot works the bust meter.
-    if (!inCar && dist < 58) busting = true;
-    // A ram at speed hurts.
-    if (inCar && dist < 44 && Math.abs(cop.speed) > 160) events.ram = true;
+  for (const cop of state.police) {
+    if (cop.disabled) continue;
+    cop.cruise = policeTopSpeed(Math.max(1, stars));
+    driveCop(state, cop, px, py, dt);
+    const d = Math.hypot(cop.x - px, cop.y - py);
+    if (stars > 0 && d < 74) {
+      const playerSpeed = p.car ? Math.abs(p.car.speed) : Math.hypot(p.vx || 0, p.vy || 0);
+      if (playerSpeed < 42) busting = true;
+    }
   }
-
-  if (busting) state.bustMeter += dt / WANTED.bustTime;
-  else state.bustMeter = Math.max(0, state.bustMeter - dt * 0.7);
-  return events;
+  if (busting) {
+    state.bust = Math.min(1, state.bust + dt / 2.4);
+    if (state.bust >= 1) state.doBusted();
+  } else {
+    state.bust = Math.max(0, state.bust - dt / 1.4);
+  }
 }
 
-/** Clear all heat at once (mission scripted, or after a bust/waste penalty). */
-export function clearHeat(state) {
-  state.points = 0;
-  state.stars = 0;
-  state.bustMeter = 0;
-  state.cars.length = 0;
-  state.unseenTime = 0;
+function driveCop(state, cop, px, py, dt) {
+  const dPlayer = Math.hypot(px - cop.x, py - cop.y);
+  let aimX, aimY;
+  if (dPlayer < 250) {
+    aimX = px; aimY = py; // kejar langsung
+  } else {
+    if (!cop.target || state.time - (cop.retargetT || 0) > 1.4) {
+      cop.target = nearestNode(px, py);
+      cop.retargetT = state.time;
+    }
+    // Jalan menuju simpang terdekat dari polisi dulu bila belum di jalan yang sama.
+    const myNode = nearestNode(cop.x, cop.y);
+    const dNode = Math.hypot(myNode.x - cop.x, myNode.y - cop.y);
+    if (dNode > 46 && Math.hypot(cop.target.x - cop.x, cop.target.y - cop.y) > 60) {
+      aimX = myNode.x; aimY = myNode.y;
+      if (Math.abs(cop.target.x - myNode.x) > 4 && Math.abs(cop.target.y - myNode.y) > 4) {
+        aimX = myNode.x; aimY = myNode.y;
+      }
+    } else {
+      aimX = cop.target.x; aimY = cop.target.y;
+    }
+  }
+  const want = Math.atan2(aimY - cop.y, aimX - cop.x);
+  cop.angle = turnToward(cop.angle, want, 2.7 * dt);
+  let speedCap = cop.cruise;
+  // Jangan menabrak pemain terlalu keras dari belakang saat sudah dekat.
+  if (dPlayer < 60) speedCap = Math.min(speedCap, 60);
+  cop.speed = approach(cop.speed, speedCap, 260 * dt);
+  const nx = cop.x + Math.cos(cop.angle) * cop.speed * dt;
+  const ny = cop.y + Math.sin(cop.angle) * cop.speed * dt;
+  const res = collideCircle(state.world, nx, ny, cop.r);
+  if (res.hit) cop.speed *= 0.5;
+  cop.x = res.x; cop.y = res.y;
+}
+
+function removeCop(state, idx) {
+  const cop = state.police[idx];
+  state.police.splice(idx, 1);
+  const ai = state.allCars.indexOf(cop);
+  if (ai >= 0) state.allCars.splice(ai, 1);
 }
