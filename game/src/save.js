@@ -1,40 +1,44 @@
-// Career save in localStorage: money earned, story missions finished and
-// side jobs done survive a reload. Everything degrades quietly when storage
-// is unavailable (private windows), keeping the session values only.
+// save.js — karier Riko di localStorage: uang, tahap cerita, total perolehan.
+// Storage bisa disuntikkan (harness uji memakai tiruan di memori).
 
-import { SAVE_KEY } from './config.js';
+const SAVE_KEY = 'sundara-heat-career-v2';
 
-/** The default fresh-career record. */
 export function defaultSave() {
-  return { money: 120, missionIndex: 0, storyDone: false, sideJobs: 0, busts: 0, wasted: 0 };
+  return { money: 40, storyStage: 0, totalEarned: 0, jobsDone: 0, bestStars: 0 };
 }
 
-/** Load the saved career, or a fresh one when there is none or it is unreadable. */
-export function loadSave() {
+export function loadSave(storage) {
+  const store = storage || safeLocal();
+  if (!store) return defaultSave();
   try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
+    const raw = store.getItem(SAVE_KEY);
     if (!raw) return defaultSave();
-    const parsed = JSON.parse(raw);
-    return { ...defaultSave(), ...parsed };
+    const data = JSON.parse(raw);
+    const base = defaultSave();
+    for (const k of Object.keys(base)) {
+      if (typeof data[k] === 'number' && Number.isFinite(data[k])) base[k] = data[k];
+    }
+    return base;
   } catch {
     return defaultSave();
   }
 }
 
-/** Persist the career record; failures are ignored on purpose. */
-export function storeSave(save) {
+export function writeSave(storage, data) {
+  const store = storage || safeLocal();
+  if (!store) return false;
   try {
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
+    store.setItem(SAVE_KEY, JSON.stringify(data));
+    return true;
   } catch {
-    // Storage off: the career simply lasts for this visit.
+    return false;
   }
 }
 
-/** Wipe the career back to a fresh start. */
-export function clearSave() {
+function safeLocal() {
   try {
-    window.localStorage.removeItem(SAVE_KEY);
+    return typeof localStorage !== 'undefined' ? localStorage : null;
   } catch {
-    // Nothing to clear when storage is unavailable.
+    return null;
   }
 }

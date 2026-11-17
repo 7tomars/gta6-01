@@ -1,85 +1,56 @@
-// Keyboard and mouse state for the game: held movement keys, one-shot action
-// edges (interact, pause, confirm, punch), and the mouse position for aiming.
+// input.js — keadaan keyboard + mouse. Bisa dibuat tanpa elemen DOM
+// (untuk harness uji): method setKey dipakai mensimulasikan tombol.
 
-export const ACTION_INTERACT = 1;
-export const ACTION_PAUSE = 2;
-export const ACTION_CONFIRM = 4;
-export const ACTION_PUNCH = 8;
-
-const KEYMAP = {
-  KeyW: 'up', ArrowUp: 'up',
-  KeyS: 'down', ArrowDown: 'down',
-  KeyA: 'left', ArrowLeft: 'left',
-  KeyD: 'right', ArrowRight: 'right',
-  ShiftLeft: 'run', ShiftRight: 'run',
-};
-
-/** Create the input tracker bound to a canvas; call dispose() to unbind. */
-export function createInput(canvas) {
-  const held = { up: false, down: false, left: false, right: false, run: false };
-  let actions = 0;
+export function createInput(el) {
+  const keys = new Set();
+  const pressed = new Set(); // tombol yang baru ditekan frame ini
   const mouse = { x: 0, y: 0, down: false, clicked: false };
 
-  function onKeyDown(event) {
-    const name = KEYMAP[event.code];
-    if (name) { held[name] = true; event.preventDefault(); }
-    if (event.repeat) return;
-    if (event.code === 'KeyE' || event.code === 'KeyF') actions |= ACTION_INTERACT;
-    if (event.code === 'Escape' || event.code === 'KeyP') actions |= ACTION_PAUSE;
-    if (event.code === 'Enter' || event.code === 'Space') actions |= ACTION_CONFIRM;
-    if (event.code === 'Space') actions |= ACTION_PUNCH;
-  }
-  function onKeyUp(event) {
-    const name = KEYMAP[event.code];
-    if (name) held[name] = false;
-  }
-  function onMouseMove(event) {
-    const rect = canvas.getBoundingClientRect();
-    mouse.x = event.clientX - rect.left;
-    mouse.y = event.clientY - rect.top;
-  }
-  function onMouseDown(event) {
-    if (event.button === 0) { mouse.down = true; mouse.clicked = true; }
-  }
-  function onMouseUp(event) {
-    if (event.button === 0) mouse.down = false;
-  }
+  const GAME_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'];
 
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  canvas.addEventListener('mousemove', onMouseMove);
-  canvas.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mouseup', onMouseUp);
+  function onKeyDown(e) {
+    if (GAME_KEYS.includes(e.code)) e.preventDefault();
+    if (!keys.has(e.code)) pressed.add(e.code);
+    keys.add(e.code);
+  }
+  function onKeyUp(e) { keys.delete(e.code); }
+  function onMouseMove(e) {
+    const r = el.getBoundingClientRect();
+    mouse.x = e.clientX - r.left;
+    mouse.y = e.clientY - r.top;
+  }
+  function onMouseDown(e) { mouse.down = true; mouse.clicked = true; onMouseMove(e); }
+  function onMouseUp() { mouse.down = false; }
+  function onBlur() { keys.clear(); mouse.down = false; }
+
+  if (el && typeof window !== 'undefined') {
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    el.addEventListener('mousemove', onMouseMove);
+    el.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mouseup', onMouseUp);
+  }
 
   return {
-    held,
-    mouse,
-    /** Movement vector from held keys, normalised, in screen space. */
-    moveVector() {
-      const x = (held.right ? 1 : 0) - (held.left ? 1 : 0);
-      const y = (held.down ? 1 : 0) - (held.up ? 1 : 0);
-      if (x === 0 && y === 0) return { x: 0, y: 0 };
-      const len = Math.hypot(x, y);
-      return { x: x / len, y: y / len };
+    keys, mouse,
+    down(code) { return keys.has(code); },
+    justPressed(code) { return pressed.has(code); },
+    // sumbu gerak gabungan WASD + panah, ternormalisasi
+    axis() {
+      let x = 0, y = 0;
+      if (keys.has('KeyA') || keys.has('ArrowLeft')) x -= 1;
+      if (keys.has('KeyD') || keys.has('ArrowRight')) x += 1;
+      if (keys.has('KeyW') || keys.has('ArrowUp')) y -= 1;
+      if (keys.has('KeyS') || keys.has('ArrowDown')) y += 1;
+      if (x !== 0 && y !== 0) { const s = Math.SQRT1_2; x *= s; y *= s; }
+      return { x, y };
     },
-    /** Read and clear the one-shot action edges gathered since the last call. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
+    setKey(code, isDown) {
+      if (isDown) { if (!keys.has(code)) pressed.add(code); keys.add(code); }
+      else keys.delete(code);
     },
-    /** Read and clear the mouse click edge. */
-    takeClick() {
-      const clicked = mouse.clicked;
-      mouse.clicked = false;
-      return clicked;
-    },
-    dispose() {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      canvas.removeEventListener('mousemove', onMouseMove);
-      canvas.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mouseup', onMouseUp);
-    },
+    // dipanggil di akhir tiap langkah simulasi
+    endStep() { pressed.clear(); mouse.clicked = false; },
   };
 }
