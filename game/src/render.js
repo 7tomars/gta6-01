@@ -251,7 +251,7 @@ function drawBuildings(ctx, state, view) {
     if (!inView(view, b.x, b.y, b.w, b.h)) continue;
     const x = b.x - view.x, y = b.y - view.y;
     // Bayangan jatuh ke tenggara.
-    ctx.fillStyle = 'rgba(30,20,10,0.25)';
+    ctx.fillStyle = 'rgba(30,20,10,0.16)';
     ctx.fillRect(x + 10, y + 12, b.w, b.h);
     // Dinding.
     ctx.fillStyle = b.color;
@@ -259,7 +259,7 @@ function drawBuildings(ctx, state, view) {
     // Atap di dalam parapet.
     ctx.fillStyle = b.roof;
     ctx.fillRect(x + 8, y + 8, b.w - 16, b.h - 16);
-    ctx.fillStyle = 'rgba(0,0,0,0.10)';
+    ctx.fillStyle = 'rgba(0,0,0,0.05)';
     ctx.fillRect(x + 18, y + 18, b.w - 36, b.h - 36);
     // Jendela menyala di sabuk parapet (deterministik per gedung).
     const step = 17;

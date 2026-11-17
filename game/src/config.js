@@ -45,7 +45,7 @@ export const PALETTE = {
   grassDark: '#6b9a44',
   sidewalk: '#cfc4a8',
   sidewalkLine: '#b7ab8d',
-  asphalt: '#4a4a52',
+  asphalt: '#5a5a65',
   asphaltEdge: '#f2ead2',
   laneDash: '#e8c95a',
   sand: '#ecd28f',
@@ -54,7 +54,7 @@ export const PALETTE = {
   seaDeep: '#1d7f8c',
   foam: '#f7f3df',
   parkPath: '#d9c491',
-  lotAsphalt: '#5b5b63',
+  lotAsphalt: '#6b6b74',
   lotLine: '#d8d2bd',
 };
 
@@ -62,7 +62,7 @@ export const BUILDING_COLORS = [
   '#e8b04b', '#df8f5a', '#e5d3a1', '#c96f4a', '#a8c686',
   '#e07a5f', '#f2cc8f', '#81b29a', '#d9a05b', '#bc6c25',
 ];
-export const ROOF_COLORS = ['#9c6644', '#7f5539', '#b08968', '#6f4e37', '#8d6e63'];
+export const ROOF_COLORS = ['#eecfa8', '#e2a183', '#f4e5c3', '#eab892', '#c3d4c5'];
 export const AWNING_COLORS = ['#c0392b', '#117a65', '#b9770e', '#6c3483', '#1a5276'];
 
 // Katalog kendaraan orisinal. speed = px/detik maksimum, accel = px/detik^2.
