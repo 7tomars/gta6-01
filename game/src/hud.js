@@ -47,6 +47,11 @@ function drawMinimap(ctx, state, view) {
     blip(s.x, s.y, PALETTE.gold, pulse);
   }
   blip(state.player.x, state.player.y, '#ffffff', 4.5);
+  // Ring the player blip so it stays readable when it overlaps the pulsing
+  // mission marker or a police blip (recovery-session polish).
+  ctx.strokeStyle = 'rgba(10,20,20,0.9)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(x0 + state.player.x * sx, y0 + state.player.y * sy, 6.2, 0, Math.PI * 2); ctx.stroke();
   ctx.restore();
   ctx.fillStyle = '#ffffff';
   ctx.font = `bold 10px ${FONT}`;
