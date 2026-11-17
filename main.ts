@@ -8,6 +8,12 @@
 // your own open-world crime game in its place (three.js or any library you vendor under game/),
 // put your 3 or 4 PNG or JPEG screenshots in screenshots/ (the first by name is the cover) and run it.
 //
+// This entry is Sundara Heat, an original open-world crime game built for this bounty:
+// a sun-soaked coastal city (Sundara Bay) explored on foot and by car, with traffic,
+// pedestrians, a wanted system and police, a three-mission story, combat, a HUD with a
+// live minimap, synthesized sound, and a career saved in the browser. All of its code
+// under game/ was written for this entry in plain JavaScript with no library at all.
+//
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
@@ -19,6 +25,8 @@ import { buildDossier } from './vendor/makefun-game.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const ENTRY_TITLE = 'Sundara Heat — an original open-world crime game set in Sundara Bay';
+console.log(`Handing in: ${ENTRY_TITLE}`);
 
 mkdirSync(out, { recursive: true });
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
