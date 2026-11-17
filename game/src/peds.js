@@ -1,111 +1,138 @@
-// Pedestrians: citizens of Sundara Bay who stroll the sidewalks around their
-// block, flee from danger, and fall when hurt. Pure ambience until the player
-// gives them a reason to run — witnesses matter to the wanted system.
+// peds.js — pejalan kaki: jalan di trotoar mengikuti sumbu jalan,
+// kadang menyeberang ganti sumbu di simpang; lari saat bahaya; bisa tumbang.
 
-import { WORLD } from './config.js';
+import { ROADS_V, ROADS_H, ROAD_W, BEACH_X, SEA_X, WORLD_H } from './config.js';
+import { collideCircle, dist2 } from './world.js';
 
-const SHIRTS = ['#ff7675', '#74b9ff', '#55efc4', '#ffeaa7', '#fd79a8', '#a29bfe', '#fab1a0', '#81ecec'];
-let nextPedId = 1;
+const SHIRTS = ['#e74c3c', '#f39c12', '#27ae60', '#8e44ad', '#d35400', '#16a085', '#c2185b', '#5d6d7e', '#b9770e', '#1f618d'];
+const SKINS = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac'];
 
-/** Create one pedestrian walking the sidewalk loop of `rect`. */
-function makePed(random, rect) {
-  const x = random.range(rect.x, rect.x + rect.w);
-  return {
-    id: nextPedId++,
-    x, y: rect.y,
-    rect, corner: random.int(0, 3),
-    speed: random.range(46, 78),
-    shirt: random.pick(SHIRTS),
-    hp: 2, state: 'walk', stateTime: 0,
-    angle: 0, fleeX: 0, fleeY: 0,
-  };
-}
-
-/** Spawn the walking population across building blocks, parks and the beach. */
-export function spawnPeds(city, random, count) {
-  const rects = [];
-  for (const b of city.buildings) rects.push({ x: b.x - 12, y: b.y - 12, w: b.w + 24, h: b.h + 24 });
-  for (const p of city.parks) rects.push(p);
+export function spawnPeds(world, rng, count) {
   const peds = [];
-  for (let i = 0; i < count; i += 1) {
-    peds.push(makePed(random, random.pick(rects)));
+  for (let i = 0; i < count - 6; i++) {
+    const onV = rng.chance(0.55);
+    const ped = {
+      x: 0, y: 0, angle: 0, speed: rng.range(38, 66),
+      axis: onV ? 'v' : 'h',
+      roadIdx: onV ? rng.int(0, ROADS_V.length - 1) : rng.int(0, ROADS_H.length - 1),
+      along: 0, lateral: (ROAD_W / 2 + 15) * rng.sign(),
+      shirt: rng.pick(SHIRTS), skin: rng.pick(SKINS),
+      health: 100, state: 'walk', stateT: 0, dirSign: rng.sign(),
+      beach: false,
+    };
+    ped.along = rng.range(80, (onV ? WORLD_H : 2900) - 80);
+    placeOnSidewalk(ped);
+    peds.push(ped);
   }
-  // Beach walkers stroll the promenade up and down.
-  for (let i = 0; i < 5; i += 1) {
-    const ped = makePed(random, { x: WORLD.beachX + 30, y: 100, w: 120, h: WORLD.height - 200 });
-    ped.x = random.range(WORLD.beachX + 40, WORLD.waterX - 60);
-    ped.y = random.range(120, WORLD.height - 120);
-    ped.beach = true;
+  // Pengunjung pantai: mondar-mandir di pasir.
+  for (let i = 0; i < 6; i++) {
+    const ped = {
+      x: rng.range(BEACH_X + 30, SEA_X - 60), y: rng.range(120, WORLD_H - 120),
+      angle: rng.range(0, Math.PI * 2), speed: rng.range(30, 48),
+      shirt: rng.pick(SHIRTS), skin: rng.pick(SKINS),
+      health: 100, state: 'walk', stateT: 0, dirSign: 1, beach: true,
+      target: null,
+    };
+    ped.target = { x: rng.range(BEACH_X + 30, SEA_X - 60), y: rng.range(120, WORLD_H - 120) };
     peds.push(ped);
   }
   return peds;
 }
 
-/** The four corners of a ped's sidewalk loop, in walking order. */
-function cornersOf(rect) {
-  return [
-    { x: rect.x, y: rect.y },
-    { x: rect.x + rect.w, y: rect.y },
-    { x: rect.x + rect.w, y: rect.y + rect.h },
-    { x: rect.x, y: rect.y + rect.h },
-  ];
-}
-
-/** Make a ped flee directly away from (x, y) for a few seconds. */
-export function scarePed(ped, x, y) {
-  if (ped.state === 'down') return;
-  ped.state = 'flee';
-  ped.stateTime = 2.6;
-  ped.fleeX = x;
-  ped.fleeY = y;
-}
-
-/** Hurt a ped; at zero health it goes down for a while. Returns true if it fell. */
-export function hurtPed(ped, damage) {
-  ped.hp -= damage;
-  if (ped.hp <= 0 && ped.state !== 'down') {
-    ped.state = 'down';
-    ped.stateTime = 8;
-    return true;
+function placeOnSidewalk(ped) {
+  if (ped.axis === 'v') {
+    ped.x = ROADS_V[ped.roadIdx] + ped.lateral;
+    ped.y = ped.along;
+  } else {
+    ped.x = ped.along;
+    ped.y = ROADS_H[ped.roadIdx] + ped.lateral;
   }
-  return false;
 }
 
-/** Advance one pedestrian for a step. */
-export function updatePed(ped, dt) {
-  ped.stateTime = Math.max(0, ped.stateTime - dt);
+export function stepPed(state, ped, dt) {
+  const world = state.world;
+  ped.stateT -= dt;
   if (ped.state === 'down') {
-    if (ped.stateTime <= 0) { ped.state = 'walk'; ped.hp = 2; }
+    if (ped.stateT <= 0 && ped.health > 0) ped.state = 'walk';
     return;
   }
-  let tx;
-  let ty;
-  let speed = ped.speed;
   if (ped.state === 'flee') {
-    if (ped.stateTime <= 0) { ped.state = 'walk'; }
-    const dx = ped.x - ped.fleeX;
-    const dy = ped.y - ped.fleeY;
-    const d = Math.hypot(dx, dy) || 1;
-    tx = ped.x + (dx / d) * 60;
-    ty = ped.y + (dy / d) * 60;
-    speed *= 2.1;
-  } else if (ped.beach) {
-    const corners = cornersOf(ped.rect);
-    const c = corners[ped.corner];
-    tx = c.x; ty = c.y;
-    if (Math.hypot(tx - ped.x, ty - ped.y) < 6) ped.corner = (ped.corner + 1) % 4;
-  } else {
-    const corners = cornersOf(ped.rect);
-    const c = corners[ped.corner];
-    tx = c.x; ty = c.y;
-    if (Math.hypot(tx - ped.x, ty - ped.y) < 6) ped.corner = (ped.corner + 1) % 4;
+    const d = state.danger;
+    if (d) {
+      const away = Math.atan2(ped.y - d.y, ped.x - d.x);
+      ped.angle = away;
+      movePed(state, ped, 148 * dt);
+    }
+    if (ped.stateT <= 0) ped.state = 'walk';
+    return;
   }
-  const dx = tx - ped.x;
-  const dy = ty - ped.y;
-  const d = Math.hypot(dx, dy);
-  if (d > 1) {
-    ped.angle = Math.atan2(dy, dx);
-    ped.x += (dx / d) * Math.min(d, speed * dt);
-    ped.y += (dy / d) * Math.min(d, speed * dt);
+  // Jalan biasa.
+  if (ped.beach) {
+    if (!ped.target || dist2(ped.x, ped.y, ped.target.x, ped.target.y) < 30 * 30) {
+      ped.target = { x: state.rng.range(BEACH_X + 30, SEA_X - 60), y: state.rng.range(120, world.h - 120) };
+    }
+    ped.angle = Math.atan2(ped.target.y - ped.y, ped.target.x - ped.x);
+    movePed(state, ped, ped.speed * dt);
+    return;
+  }
+  ped.along += ped.dirSign * ped.speed * dt;
+  const limit = ped.axis === 'v' ? world.h : 2960;
+  if (ped.along > limit - 70) { ped.along = limit - 70; ped.dirSign = -1; }
+  if (ped.along < 70) { ped.along = 70; ped.dirSign = 1; }
+  // Di dekat simpang, kadang pindah sumbu (menyeberang).
+  const crossCenters = ped.axis === 'v' ? ROADS_H : ROADS_V;
+  for (const c of crossCenters) {
+    if (Math.abs(ped.along - c) < 8 && state.rng.chance(0.012)) {
+      const alongHere = ped.axis === 'v' ? ped.y : ped.x;
+      ped.axis = ped.axis === 'v' ? 'h' : 'v';
+      ped.roadIdx = crossCenters.indexOf(c);
+      ped.along = alongHere;
+      ped.lateral = (ROAD_W / 2 + 15) * state.rng.sign();
+      break;
+    }
+  }
+  const ox = ped.x, oy = ped.y;
+  placeOnSidewalk(ped);
+  ped.angle = Math.atan2(ped.y - oy, ped.x - ox);
+}
+
+function movePed(state, ped, stepLen) {
+  const nx = ped.x + Math.cos(ped.angle) * stepLen;
+  const ny = ped.y + Math.sin(ped.angle) * stepLen;
+  const res = collideCircle(state.world, nx, ny, 11);
+  ped.x = res.x; ped.y = res.y;
+}
+
+export function knockDown(ped, seconds) {
+  ped.state = 'down';
+  ped.stateT = seconds;
+}
+
+// Mobil cepat menabrak pejalan kaki.
+export function checkCarHitsPeds(state, dt) {
+  for (const car of state.allCars) {
+    if (car.disabled || Math.abs(car.speed) < 55) continue;
+    for (const ped of state.peds) {
+      if (ped.state === 'down') continue;
+      if (dist2(car.x, car.y, ped.x, ped.y) < (car.r + 12) * (car.r + 12)) {
+        ped.health -= Math.abs(car.speed) > 170 ? 70 : 40;
+        knockDown(ped, ped.health > 0 ? 5 : 9999);
+        state.addParticle(ped.x, ped.y, 'hit');
+        if (car === state.playerCar) {
+          state.reportCrime(ped.x, ped.y, 55);
+          state.audio.thud();
+          state.shake(0.18);
+        }
+      }
+    }
+    // Pemain jalan kaki tertabrak mobil lain.
+    const p = state.player;
+    if (!p.car && car !== state.playerCar && dist2(car.x, car.y, p.x, p.y) < (car.r + 13) * (car.r + 13)) {
+      state.damagePlayer(Math.abs(car.speed) > 170 ? 26 : 14);
+      const away = Math.atan2(p.y - car.y, p.x - car.x);
+      p.x += Math.cos(away) * 26;
+      p.y += Math.sin(away) * 26;
+      car.speed *= 0.4;
+    }
   }
 }

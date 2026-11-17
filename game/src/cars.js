@@ -1,189 +1,219 @@
-// Cars: the shared vehicle record, parked cars, traffic that drives the road
-// grid on its own, and the player's driving physics when behind the wheel.
+// cars.js — entitas mobil, spawn parkir & lalu lintas, AI pengemudi kota,
+// dan fisika menyetir pemain (arkade: gas, rem, setir tergantung kecepatan).
 
-import { CAR, CAR_MODELS, ROADS } from './config.js';
-import { isOnRoad, resolveCircle } from './world.js';
+import { CAR_MODELS, TRAFFIC_MIX, PARKED_MIX } from './config.js';
+import { collideCircle, nearestNode, intersections, dist2 } from './world.js';
+import { ROADS_V, ROADS_H } from './config.js';
 
-let nextCarId = 1;
+let carSeq = 1;
 
-/** Create one car record. kind is 'parked', 'traffic', 'police' or 'player'. */
-export function makeCar(x, y, angle, model, color, kind) {
+export function makeCar(modelKey, x, y, angle, colorOverride) {
+  const m = CAR_MODELS[modelKey];
   return {
-    id: nextCarId++, x, y, angle, speed: 0,
-    model, color, kind, health: 6,
-    axis: 'v', dir: 1, lane: 0, cruise: 150, turnCd: 0, hornCd: 0, dead: false,
+    id: carSeq++,
+    model: modelKey,
+    name: m.name,
+    color: colorOverride || m.color,
+    r: m.r,
+    x, y, angle,
+    speed: 0,
+    health: 100,
+    police: modelKey === 'police',
+    parked: false,
+    disabled: false,
+    // state AI
+    target: null,
+    cruise: 0,
+    stuckT: 0,
+    honkT: 0,
   };
 }
 
-/** The lane offset (right-hand traffic) for a car on `axis` moving with `dir`. */
-function laneOffset(axis, dir) {
-  // Screen y points down: heading south (+y) the right side is west (-x).
-  if (axis === 'v') return dir > 0 ? -38 : 38;
-  return dir > 0 ? 38 : -38;
-}
-
-/** Put a traffic car on a random road, in its lane, heading along it. */
-function placeOnRoad(car, random) {
-  car.axis = random.chance(0.5) ? 'v' : 'h';
-  car.dir = random.chance(0.5) ? 1 : -1;
-  const off = laneOffset(car.axis, car.dir);
-  if (car.axis === 'v') {
-    const cx = random.pick(ROADS.vertical);
-    car.lane = cx + off;
-    car.x = car.lane;
-    car.y = random.range(80, 2300);
-    car.angle = car.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
-  } else {
-    const cy = random.pick(ROADS.horizontal);
-    car.lane = cy + off;
-    car.y = car.lane;
-    car.x = random.range(80, 2800);
-    car.angle = car.dir > 0 ? 0 : Math.PI;
-  }
-  car.cruise = random.range(130, 205) * car.model.speed;
-}
-
-/** Spawn the ambient traffic fleet. */
-export function spawnTraffic(random, count) {
+export function spawnParked(world, rng) {
   const cars = [];
-  for (let i = 0; i < count; i += 1) {
-    const model = random.pick(CAR_MODELS);
-    const car = makeCar(0, 0, 0, model, random.pick(model.colors), 'traffic');
-    placeOnRoad(car, random);
+  for (const lot of world.lots) {
+    const cols = Math.max(1, Math.floor(lot.w / 64));
+    const rows = Math.max(1, Math.floor(lot.h / 92));
+    for (let i = 0; i < cols; i++) {
+      for (let j = 0; j < rows; j++) {
+        if (!rng.chance(0.55)) continue;
+        const x = lot.x + 34 + i * 64;
+        const y = lot.y + 46 + j * 92;
+        const car = makeCar(rng.pick(PARKED_MIX), x, y, rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2, rng.pick(['#c0392b', '#2471a3', '#7d3c98', '#b7950b', '#616a6b', '#ca6f1e', '#148f77', '#fdfefe']));
+        car.parked = true;
+        cars.push(car);
+      }
+    }
+  }
+  // Satu Melati GT emas selalu parkir di Parkir Timur: incaran misi 2.
+  const lot = world.places.carpark.block;
+  const gt = makeCar('gt', lot.x + lot.w / 2, lot.y + 52, Math.PI / 2);
+  gt.parked = true;
+  gt.isMissionCar = true;
+  cars.push(gt);
+  // Pickup santai di tepi pantai.
+  const pk = makeCar('pickup', 3160, 1320, -Math.PI / 2, '#e67e22');
+  pk.parked = true;
+  cars.push(pk);
+  return cars;
+}
+
+export function spawnTraffic(world, rng, count) {
+  const cars = [];
+  const nodes = intersections();
+  for (let i = 0; i < count; i++) {
+    const node = rng.pick(nodes);
+    const car = makeCar(rng.pick(TRAFFIC_MIX), node.x + rng.range(-20, 20), node.y + rng.range(-20, 20), 0,
+      rng.pick(['#c0392b', '#2471a3', '#7d3c98', '#b7950b', '#616a6b', '#ca6f1e', '#148f77', '#2e86c1', '#a93226', '#fdfefe']));
+    car.cruise = rng.range(118, 168);
+    car.target = pickNextNode(rng, node, null);
+    snapToLane(car);
     cars.push(car);
   }
   return cars;
 }
 
-/** Spawn parked cars in the city's car parks and along a few kerbs. */
-export function spawnParked(city, random) {
-  const cars = [];
-  for (const park of city.carParks) {
-    for (const spot of park.spots) {
-      if (!random.chance(0.45)) continue;
-      const model = random.pick(CAR_MODELS);
-      cars.push(makeCar(spot.x, spot.y, spot.angle + (random.chance(0.5) ? 0 : Math.PI), model, random.pick(model.colors), 'parked'));
-    }
-  }
-  // Kerbside parking along the vertical roads, so every seed's city has cars
-  // to steal even when few blocks rolled as car parks.
-  for (const roadX of [660, 1180, 1700, 2220]) {
-    for (let y = 320; y < 2250; y += 340) {
-      if (!random.chance(0.55)) continue;
-      const model = random.pick(CAR_MODELS);
-      const side = random.chance(0.5) ? -1 : 1;
-      cars.push(makeCar(roadX + side * (ROADS.width / 2 + 24), y + random.range(-30, 30), Math.PI / 2, model, random.pick(model.colors), 'parked'));
-    }
-  }
-  // A golden Melati GT waits by the lookout tower: the story's target car.
-  const tower = city.places['Menara Pandang'];
-  const gt = makeCar(tower.x + 60, tower.y + 30, 0, CAR_MODELS[4], '#ffd21f', 'parked');
-  gt.storyTarget = true;
-  cars.push(gt);
-  return cars;
+// Pilih simpang tetangga (searah baris/kolom), hindari putar balik bila bisa.
+function pickNextNode(rng, from, avoid) {
+  const options = [];
+  for (const x of ROADS_V) if (x !== from.x) options.push({ x, y: from.y });
+  for (const y of ROADS_H) if (y !== from.y) options.push({ x: from.x, y });
+  const filtered = avoid ? options.filter(o => !(o.x === avoid.x && o.y === avoid.y)) : options;
+  return rng.pick(filtered.length ? filtered : options);
 }
 
-/** Distance to the nearest car ahead in the same lane, or Infinity. */
-function carAhead(car, all) {
-  let best = Infinity;
-  for (const other of all) {
-    if (other === car || other.dead) continue;
-    let along;
-    let across;
-    if (car.axis === 'v') { along = (other.y - car.y) * car.dir; across = Math.abs(other.x - car.x); }
-    else { along = (other.x - car.x) * car.dir; across = Math.abs(other.y - car.y); }
-    if (along > 0 && along < best && across < 30) best = along;
-  }
-  return best;
+function laneTarget(car) {
+  // Titik bidik = simpang tujuan digeser ke lajur kanan relatif arah jalan.
+  const dx = car.target.x - car.x, dy = car.target.y - car.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len, uy = dy / len;
+  const off = 26;
+  return { x: car.target.x + (-uy) * off, y: car.target.y + ux * off, ux, uy };
 }
 
-/**
- * Advance one traffic car: cruise its lane, brake for the car ahead, and
- * sometimes turn at an intersection onto the crossing road.
- */
-export function updateTraffic(car, all, city, random, dt, events) {
-  if (car.kind !== 'traffic' || car.dead) return;
-  car.turnCd = Math.max(0, car.turnCd - dt);
-  car.hornCd = Math.max(0, car.hornCd - dt);
-  const ahead = carAhead(car, all);
-  let target = car.cruise;
-  if (ahead < 70) target = 0;
-  else if (ahead < 130) target = car.cruise * 0.45;
-  if (ahead < 55 && car.hornCd <= 0) { events.horn = true; car.hornCd = random.range(2, 5); }
-  car.speed += Math.sign(target - car.speed) * Math.min(Math.abs(target - car.speed), 260 * dt);
+function snapToLane(car) {
+  if (!car.target) return;
+  const t = laneTarget(car);
+  car.angle = Math.atan2(t.uy, t.ux);
+}
 
-  if (car.axis === 'v') car.y += car.dir * car.speed * dt;
-  else car.x += car.dir * car.speed * dt;
+export function stepTraffic(state, car, dt) {
+  if (car.parked || car.disabled || car === state.playerCar) return;
+  const world = state.world;
+  if (!car.target) { car.target = pickNextNode(state.rng, nearestNode(car.x, car.y), null); }
+  const t = laneTarget(car);
+  const distT = Math.hypot(t.x - car.x, t.y - car.y);
+  if (distT < 42) {
+    const prev = nearestNode(car.x, car.y);
+    car.target = pickNextNode(state.rng, car.target, prev);
+    return;
+  }
+  const want = Math.atan2(t.y - car.y, t.x - car.x);
+  car.angle = turnToward(car.angle, want, 2.4 * dt);
 
-  // Intersection turn: when crossing a perpendicular road centre, maybe turn.
-  const lines = car.axis === 'v' ? ROADS.horizontal : ROADS.vertical;
-  const pos = car.axis === 'v' ? car.y : car.x;
-  for (const line of lines) {
-    if (Math.abs(pos - line) < Math.abs(car.speed * dt) + 2 && car.turnCd <= 0 && random.chance(0.4)) {
-      const oldAxis = car.axis;
-      car.axis = oldAxis === 'v' ? 'h' : 'v';
-      car.dir = random.chance(0.5) ? 1 : -1;
-      const off = laneOffset(car.axis, car.dir);
-      if (car.axis === 'v') { car.lane = line + off; car.x = car.lane; car.angle = car.dir > 0 ? Math.PI / 2 : -Math.PI / 2; }
-      else { car.lane = line + off; car.y = car.lane; car.angle = car.dir > 0 ? 0 : Math.PI; }
-      car.turnCd = 1.2;
-      break;
+  // Jaga jarak dengan mobil di depan (searah, dekat).
+  let speedCap = car.cruise;
+  for (const other of state.allCars) {
+    if (other === car || other.disabled) continue;
+    const d2 = dist2(car.x, car.y, other.x, other.y);
+    if (d2 > 95 * 95) continue;
+    const ahead = (other.x - car.x) * Math.cos(car.angle) + (other.y - car.y) * Math.sin(car.angle);
+    if (ahead > 6 && ahead < 78) speedCap = Math.min(speedCap, Math.max(0, (ahead - 34) * 2.2));
+  }
+  // Pemain jalan kaki di depan mobil -> berhenti & klakson.
+  const p = state.player;
+  if (!p.car) {
+    const aheadP = (p.x - car.x) * Math.cos(car.angle) + (p.y - car.y) * Math.sin(car.angle);
+    const sideP = Math.abs((p.x - car.x) * -Math.sin(car.angle) + (p.y - car.y) * Math.cos(car.angle));
+    if (aheadP > 0 && aheadP < 66 && sideP < 24) {
+      speedCap = 0;
+      if (car.honkT <= 0) { car.honkT = 2.4; state.audio.honk(); }
     }
   }
-  if (car.axis === 'v') car.x += (car.lane - car.x) * Math.min(1, dt * 3);
-  else car.y += (car.lane - car.y) * Math.min(1, dt * 3);
-
-  // Keep traffic inside the drivable land; turn around at the edges.
-  if (car.x < 60 || car.x > 2880 || car.y < 60 || car.y > 2340) {
-    car.dir *= -1;
-    const off = laneOffset(car.axis, car.dir);
-    if (car.axis === 'v') { car.lane = Math.round((car.x - off) / 1) ; car.x = Math.max(60, Math.min(2880, car.x)); car.angle = car.dir > 0 ? Math.PI / 2 : -Math.PI / 2; }
-    else { car.y = Math.max(60, Math.min(2340, car.y)); car.angle = car.dir > 0 ? 0 : Math.PI; }
-    car.x = Math.max(60, Math.min(2880, car.x));
-    car.y = Math.max(60, Math.min(2340, car.y));
-  }
-  resolveCircle(city, car, CAR.radius);
+  car.honkT -= dt;
+  car.speed = approach(car.speed, speedCap, (speedCap > car.speed ? 120 : 320) * dt);
+  const nx = car.x + Math.cos(car.angle) * car.speed * dt;
+  const ny = car.y + Math.sin(car.angle) * car.speed * dt;
+  const res = collideCircle(world, nx, ny, car.r);
+  if (res.hit && car.speed > 40) car.speed = 40;
+  car.x = res.x; car.y = res.y;
 }
 
-/**
- * Drive the player's car from input: throttle/brake/reverse, speed-sensitive
- * steering, simple building collision that costs speed and health.
- * Returns the impact speed when a crash happened this step, else 0.
- */
-export function updatePlayerCar(car, held, city, dt) {
-  const maxF = CAR.maxSpeed * car.model.speed;
-  if (held.up) car.speed += CAR.accel * dt;
-  else if (held.down) {
-    if (car.speed > 10) car.speed -= CAR.brake * dt;
-    else car.speed = Math.max(-CAR.maxReverse, car.speed - CAR.accel * 0.6 * dt);
-  } else {
-    car.speed -= car.speed * CAR.drag * dt;
-    if (Math.abs(car.speed) < 4) car.speed = 0;
-  }
-  car.speed = Math.max(-CAR.maxReverse, Math.min(maxF, car.speed));
-  const steer = (held.right ? 1 : 0) - (held.left ? 1 : 0);
-  if (steer !== 0 && car.speed !== 0) {
-    const grip = Math.min(1, Math.abs(car.speed) / 120);
-    car.angle += steer * CAR.turnRate * grip * dt * Math.sign(car.speed);
-  }
-  const before = { x: car.x, y: car.y };
-  car.x += Math.cos(car.angle) * car.speed * dt;
-  car.y += Math.sin(car.angle) * car.speed * dt;
-  let impact = 0;
-  if (resolveCircle(city, car, CAR.radius)) {
-    const moved = Math.hypot(car.x - before.x, car.y - before.y);
-    const wanted = Math.abs(car.speed) * dt;
-    if (wanted - moved > 2 && Math.abs(car.speed) > 120) impact = Math.abs(car.speed);
+// Fisika mobil pemain. input: {throttle:-1..1, steer:-1..1}
+export function stepPlayerCar(state, car, ctrl, dt) {
+  const m = CAR_MODELS[car.model];
+  if (car.disabled) { car.speed = approach(car.speed, 0, 300 * dt); return; }
+  const accel = ctrl.throttle > 0 ? m.accel : m.accel * 0.62;
+  car.speed += ctrl.throttle * accel * dt;
+  // Hambatan udara + gesekan.
+  car.speed -= car.speed * 0.55 * dt;
+  if (ctrl.throttle === 0) car.speed = approach(car.speed, 0, 60 * dt);
+  car.speed = Math.max(-m.speed * 0.32, Math.min(m.speed, car.speed));
+  const steerPower = ctrl.steer * (1.9 - Math.min(1.15, Math.abs(car.speed) / m.speed * 1.15));
+  if (Math.abs(car.speed) > 4) car.angle += steerPower * dt * Math.sign(car.speed);
+  const nx = car.x + Math.cos(car.angle) * car.speed * dt;
+  const ny = car.y + Math.sin(car.angle) * car.speed * dt;
+  const res = collideCircle(state.world, nx, ny, car.r);
+  if (res.hit) {
+    if (Math.abs(car.speed) > 150) {
+      state.damagePlayer(4);
+      state.audio.crash();
+      state.shake(0.22);
+    }
     car.speed *= 0.35;
   }
-  return impact;
+  car.x = res.x; car.y = res.y;
+  // Asap ban saat belok tajam dalam kecepatan.
+  if (Math.abs(car.speed) > 170 && Math.abs(ctrl.steer) > 0.6 && state.rng.chance(0.35)) {
+    state.addParticle(car.x - Math.cos(car.angle) * 16, car.y - Math.sin(car.angle) * 16, 'smoke');
+  }
 }
 
-/** True when a point is close enough to a car to interact with it. */
-export function nearCar(x, y, car, dist) {
-  return Math.hypot(car.x - x, car.y - y) <= dist;
+// Tabrakan antar mobil (lingkaran sederhana, saling dorong).
+export function collideCars(state, dt) {
+  const cars = state.allCars;
+  for (let i = 0; i < cars.length; i++) {
+    const a = cars[i];
+    for (let j = i + 1; j < cars.length; j++) {
+      const b = cars[j];
+      const rr = a.r + b.r - 4;
+      const d2 = dist2(a.x, a.y, b.x, b.y);
+      if (d2 >= rr * rr || d2 === 0) continue;
+      const d = Math.sqrt(d2);
+      const push = (rr - d) / 2;
+      const ux = (b.x - a.x) / d, uy = (b.y - a.y) / d;
+      const relSpeed = Math.abs(a.speed - b.speed);
+      if (!a.parked) { a.x -= ux * push; a.y -= uy * push; }
+      if (!b.parked) { b.x += ux * push; b.y += uy * push; }
+      if (a.parked) a.parked = false;
+      if (b.parked) b.parked = false;
+      if (relSpeed > 120) {
+        a.health -= 9; b.health -= 9;
+        if (a === state.playerCar || b === state.playerCar) {
+          state.damagePlayer(5);
+          state.audio.crash();
+          state.shake(0.3);
+          state.reportCrime(a.x, a.y, 18);
+        }
+      }
+      const avg = (a.speed + b.speed) / 2;
+      if (!a.disabled) a.speed = avg * 0.7;
+      if (!b.disabled) b.speed = avg * 0.7;
+      if (a.health <= 0) a.disabled = true;
+      if (b.health <= 0) b.disabled = true;
+    }
+  }
 }
 
-export function isOnRoadNow(car) {
-  return isOnRoad(car.x, car.y);
+export function turnToward(angle, want, maxStep) {
+  let d = want - angle;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  if (Math.abs(d) <= maxStep) return want;
+  return angle + Math.sign(d) * maxStep;
+}
+
+export function approach(v, target, step) {
+  if (v < target) return Math.min(target, v + step);
+  return Math.max(target, v - step);
 }
