@@ -8,7 +8,7 @@ import { createInput } from './input.js';
 import { createAudio } from './audio.js';
 import { loadSave, writeSave } from './save.js';
 import { buildWorld, collideCircle } from './world.js';
-import { spawnParked, spawnTraffic, stepTraffic, stepPlayerCar, collideCars } from './cars.js';
+import { spawnParked, spawnTraffic, stepTraffic, stepPlayerCar, stepLooseCar, collideCars } from './cars.js';
 import { spawnPeds, stepPed, checkCarHitsPeds } from './peds.js';
 import { Wanted, stepPolice } from './police.js';
 import { stepCombat, scarePeds } from './combat.js';
@@ -153,6 +153,11 @@ function stepGame(state, dt) {
   for (const car of state.traffic) stepTraffic(state, car, dt);
   for (const ped of state.peds) stepPed(state, ped, dt);
   collideCars(state, dt);
+  for (const car of state.allCars) {
+    if (!car.parked && car !== state.player.car && !state.traffic.includes(car) && !state.police.includes(car)) {
+      stepLooseCar(state, car, dt);
+    }
+  }
 
   if (state.mode === 'title') {
     const c = state.shotCam || { x: 1740, y: 1260 };

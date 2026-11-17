@@ -180,11 +180,13 @@ export function collideCars(state, dt) {
       const d2 = dist2(a.x, a.y, b.x, b.y);
       if (d2 >= rr * rr || d2 === 0) continue;
       const d = Math.sqrt(d2);
-      const push = (rr - d) / 2;
+      const total = rr - d;
       const ux = (b.x - a.x) / d, uy = (b.y - a.y) / d;
       const relSpeed = Math.abs(a.speed - b.speed);
-      if (!a.parked) { a.x -= ux * push; a.y -= uy * push; }
-      if (!b.parked) { b.x += ux * push; b.y += uy * push; }
+      // Mobil parkir (tanpa mesin) terdorong jauh lebih mudah daripada mobil hidup.
+      const wa = a.parked && !b.parked ? 0.85 : b.parked && !a.parked ? 0.15 : 0.5;
+      a.x -= ux * total * wa; a.y -= uy * total * wa;
+      b.x += ux * total * (1 - wa); b.y += uy * total * (1 - wa);
       if (a.parked) a.parked = false;
       if (b.parked) b.parked = false;
       if (relSpeed > 120) {
@@ -196,13 +198,32 @@ export function collideCars(state, dt) {
           state.reportCrime(a.x, a.y, 18);
         }
       }
-      const avg = (a.speed + b.speed) / 2;
-      if (!a.disabled) a.speed = avg * 0.7;
-      if (!b.disabled) b.speed = avg * 0.7;
+      if (relSpeed > 30) {
+        // Benturan nyata: kecepatan bertemu di tengah.
+        const avg = (a.speed + b.speed) / 2;
+        if (!a.disabled) a.speed = avg * 0.8;
+        if (!b.disabled) b.speed = avg * 0.8;
+      } else if (a.speed > b.speed) {
+        // Dorongan pelan: yang didorong ikut menggelinding.
+        if (!b.disabled) b.speed = Math.max(b.speed, a.speed * 0.92);
+      } else if (b.speed > a.speed) {
+        if (!a.disabled) a.speed = Math.max(a.speed, b.speed * 0.92);
+      }
       if (a.health <= 0) a.disabled = true;
       if (b.health <= 0) b.disabled = true;
     }
   }
+}
+
+// Mobil lepas (bekas parkir yang terdorong): menggelinding lurus lalu berhenti.
+export function stepLooseCar(state, car, dt) {
+  if (car.parked || car.disabled || Math.abs(car.speed) < 1) { if (!car.parked) car.speed = 0; return; }
+  const nx = car.x + Math.cos(car.angle) * car.speed * dt;
+  const ny = car.y + Math.sin(car.angle) * car.speed * dt;
+  const res = collideCircle(state.world, nx, ny, car.r);
+  car.x = res.x; car.y = res.y;
+  if (res.hit) car.speed = 0;
+  else car.speed = approach(car.speed, 0, 130 * dt);
 }
 
 export function turnToward(angle, want, maxStep) {
