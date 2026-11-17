@@ -1,202 +1,288 @@
-// The HUD and the screens: money, health, wanted stars, the mission objective
-// and banner, the bust meter, context prompts, a live minimap, and the title,
-// pause, BUSTED and WASTED overlays. Everything the player reads lives here.
+// hud.js — lapisan layar: panel uang/health/bintang, info kendaraan, bar
+// objektif, banner dialog, meter tangkap, minimap hidup, dan layar
+// judul / jeda / tertangkap / terluka.
 
-import { CITY_NAME, FONT, GAME_TITLE, HERO_NAME, PALETTE, ROADS, WORLD } from './config.js';
+import { WORLD_W, WORLD_H, ROADS_V, ROADS_H, BEACH_X, SEA_X } from './config.js';
 
-export const SCREEN_TITLE = 'title';
-export const SCREEN_PLAY = 'play';
-export const SCREEN_PAUSED = 'paused';
-export const SCREEN_BUSTED = 'busted';
-export const SCREEN_WASTED = 'wasted';
+export function formatMoney(n) {
+  const neg = n < 0;
+  const digits = String(Math.abs(Math.round(n)));
+  let out = '';
+  for (let i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 === 0) out += '.';
+    out += digits[i];
+  }
+  return (neg ? '-$ ' : '$ ') + out;
+}
 
-const MAP_W = 216;
-const MAP_H = 152;
+export function drawHud(ctx, state) {
+  const w = state.view.w, h = state.view.h;
+  drawVignette(ctx, w, h);
+  if (state.mode === 'title') { drawTitle(ctx, state); return; }
+  drawStatusPanel(ctx, state);
+  drawMinimap(ctx, state);
+  drawDialogue(ctx, state, w);
+  drawObjectives(ctx, state, w, h);
+  if (state.player.car) drawVehiclePanel(ctx, state, w, h);
+  if (state.bust > 0.02) drawBustMeter(ctx, state, w, h);
+  if (state.mode === 'pause') drawPause(ctx, state);
+  if (state.mode === 'busted') drawEndScreen(ctx, state, 'TERTANGKAP', 'Polisi Sundara Bay menahan Riko. Denda $120 dipotong, utang tetap menunggu.', '#7b1410');
+  if (state.mode === 'wasted') drawEndScreen(ctx, state, 'TERLUKA', 'Riko terbangun di RS Sundara. Biaya perawatan $90. Ayo, kota tidak menunggu.', '#4a0f14');
+}
 
-/** Draw the minimap: roads, coast, and blips for player, police and mission. */
-function drawMinimap(ctx, state, view) {
-  const x0 = view.w - MAP_W - 14;
-  const y0 = 14;
-  const sx = MAP_W / WORLD.width;
-  const sy = MAP_H / WORLD.height;
-  ctx.fillStyle = 'rgba(24,42,44,0.88)';
-  ctx.beginPath(); ctx.roundRect(x0, y0, MAP_W, MAP_H, 8); ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-  ctx.stroke();
-  ctx.save();
-  ctx.beginPath(); ctx.roundRect(x0, y0, MAP_W, MAP_H, 8); ctx.clip();
-  ctx.fillStyle = '#35924e';
-  ctx.fillRect(x0 + WORLD.beachX * sx, y0, (WORLD.waterX - WORLD.beachX) * sx, MAP_H);
-  ctx.fillStyle = '#1299ad';
-  ctx.fillRect(x0 + WORLD.waterX * sx, y0, MAP_W, MAP_H);
-  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-  ctx.lineWidth = 2;
+function drawVignette(ctx, w, h) {
+  const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.42, w / 2, h / 2, Math.max(w, h) * 0.78);
+  g.addColorStop(0, 'rgba(70,35,0,0)');
+  g.addColorStop(1, 'rgba(70,35,0,0.17)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+}
+
+function panel(ctx, x, y, w, h) {
+  ctx.fillStyle = 'rgba(14,20,24,0.78)';
   ctx.beginPath();
-  for (const x of ROADS.vertical) { ctx.moveTo(x0 + x * sx, y0); ctx.lineTo(x0 + x * sx, y0 + MAP_H); }
-  for (const y of ROADS.horizontal) { ctx.moveTo(x0, y0 + y * sy); ctx.lineTo(x0 + MAP_W, y0 + y * sy); }
+  ctx.roundRect(x, y, w, h, 10);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,235,190,0.25)';
+  ctx.lineWidth = 1;
   ctx.stroke();
-  const blip = (x, y, color, r = 3) => {
-    ctx.fillStyle = color;
-    ctx.beginPath(); ctx.arc(x0 + x * sx, y0 + y * sy, r, 0, Math.PI * 2); ctx.fill();
-  };
-  for (const cop of state.police.cars) blip(cop.x, cop.y, Math.floor(state.time * 4) % 2 ? '#ff3b30' : '#4d7cff', 3.5);
-  for (const car of state.cars) if (car.storyTarget && !car.dead) blip(car.x, car.y, '#ffd21f', 4);
-  const s = state.missions.stage();
-  if (s) {
-    const pulse = 4 + Math.sin(state.time * 6) * 1.2;
-    blip(s.x, s.y, PALETTE.gold, pulse);
-  }
-  blip(state.player.x, state.player.y, '#ffffff', 4.5);
-  // Ring the player blip so it stays readable when it overlaps the pulsing
-  // mission marker or a police blip (recovery-session polish).
-  ctx.strokeStyle = 'rgba(10,20,20,0.9)';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.arc(x0 + state.player.x * sx, y0 + state.player.y * sy, 6.2, 0, Math.PI * 2); ctx.stroke();
-  ctx.restore();
-  ctx.fillStyle = '#ffffff';
-  ctx.font = `bold 10px ${FONT}`;
-  ctx.textAlign = 'left';
-  ctx.fillText(CITY_NAME.toUpperCase(), x0 + 8, y0 + MAP_H - 8);
 }
 
-/** Draw five wanted stars, filled up to the current level. */
-function drawStars(ctx, stars, x, y) {
-  ctx.font = '22px system-ui, sans-serif';
+function drawStatusPanel(ctx, state) {
+  panel(ctx, 14, 14, 218, 96);
+  ctx.fillStyle = '#ffd54f';
+  ctx.font = '700 24px system-ui, sans-serif';
   ctx.textAlign = 'left';
-  for (let i = 0; i < 5; i += 1) {
-    ctx.fillStyle = i < stars ? PALETTE.gold : 'rgba(255,255,255,0.28)';
-    ctx.fillText('★', x + i * 24, y);
+  ctx.fillText(formatMoney(state.career.money), 26, 44);
+  // Bar kesehatan.
+  const hp = Math.max(0, state.player.health) / 100;
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.fillRect(26, 54, 150, 10);
+  ctx.fillStyle = hp > 0.45 ? '#66bb6a' : hp > 0.22 ? '#ffa726' : '#ef5350';
+  ctx.fillRect(26, 54, 150 * hp, 10);
+  // Bintang wanted.
+  const stars = state.wanted.stars;
+  ctx.font = '19px system-ui, sans-serif';
+  for (let i = 0; i < 5; i++) {
+    ctx.fillStyle = i < stars ? '#ffca28' : 'rgba(255,255,255,0.22)';
+    ctx.fillText('★', 26 + i * 23, 88);
+  }
+  if (stars > 0) {
+    const frac = (state.wanted.heat % 100) / 100;
+    ctx.fillStyle = 'rgba(255,202,40,0.55)';
+    ctx.fillRect(26, 94, 108 * (stars >= 5 ? 1 : frac), 3);
   }
 }
 
-/** The in-play HUD: stats top-left, minimap top-right, objective bottom. */
-export function drawHud(ctx, state, view) {
-  const { player, police, save } = state;
-  ctx.save();
-  // Stats panel.
-  ctx.fillStyle = PALETTE.panel;
-  ctx.beginPath(); ctx.roundRect(14, 14, 238, 126, 10); ctx.fill();
-  ctx.fillStyle = PALETTE.gold;
-  ctx.font = `bold 24px ${FONT}`;
-  ctx.textAlign = 'left';
-  ctx.fillText(`$${save.money}`, 28, 46);
-  // Health bar.
-  ctx.fillStyle = 'rgba(255,255,255,0.25)';
-  ctx.fillRect(28, 58, 150, 12);
-  ctx.fillStyle = player.health > 30 ? '#2ecc71' : PALETTE.danger;
-  ctx.fillRect(28, 58, 150 * Math.max(0, player.health) / 100, 12);
-  ctx.fillStyle = '#ffffff';
-  ctx.font = `12px ${FONT}`;
-  ctx.fillText(player.inCar ? `${player.car.model.name} — ${Math.round(Math.abs(player.car.speed))} km/j` : `${HERO_NAME} — jalan kaki`, 28, 92);
-  drawStars(ctx, police.stars, 28, 134);
-
-  drawMinimap(ctx, state, view);
-
-  // Objective line, bottom centre.
-  const objective = state.missions.objective();
-  if (objective) {
-    ctx.font = `bold 16px ${FONT}`;
-    const w = Math.min(view.w - 40, ctx.measureText(objective).width + 36);
-    ctx.fillStyle = PALETTE.panel;
-    ctx.beginPath(); ctx.roundRect((view.w - w) / 2, view.h - 52, w, 36, 9); ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.fillText(objective, view.w / 2, view.h - 29);
-  }
-  // Story banner, top centre.
-  if (state.missions.bannerTime > 0 && state.missions.banner) {
-    ctx.font = `15px ${FONT}`;
-    const lines = wrapText(ctx, state.missions.banner, view.w * 0.62);
-    const h = lines.length * 21 + 22;
-    ctx.fillStyle = 'rgba(16,20,28,0.85)';
-    ctx.beginPath(); ctx.roundRect(view.w * 0.19, 22, view.w * 0.62, h, 10); ctx.fill();
-    ctx.fillStyle = PALETTE.gold;
-    ctx.textAlign = 'center';
-    lines.forEach((line, i) => ctx.fillText(line, view.w / 2, 48 + i * 21));
-  }
-  // Bust meter.
-  if (police.bustMeter > 0.02) {
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.fillRect(view.w / 2 - 90, 120, 180, 12);
-    ctx.fillStyle = PALETTE.danger;
-    ctx.fillRect(view.w / 2 - 90, 120, 180 * Math.min(1, police.bustMeter), 12);
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `bold 12px ${FONT}`;
-    ctx.textAlign = 'center';
-    ctx.fillText('DITANGKAP…', view.w / 2, 112);
-  }
-  // Context prompt.
-  if (state.prompt) {
-    ctx.font = `bold 15px ${FONT}`;
-    ctx.fillStyle = PALETTE.panel;
-    const w = ctx.measureText(state.prompt).width + 30;
-    ctx.beginPath(); ctx.roundRect(view.w / 2 - w / 2, view.h - 100, w, 32, 8); ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.fillText(state.prompt, view.w / 2, view.h - 79);
-  }
-  ctx.restore();
+function drawVehiclePanel(ctx, state, w, h) {
+  const car = state.player.car;
+  panel(ctx, w - 232, h - 74, 218, 60);
+  ctx.fillStyle = '#f5efe0';
+  ctx.font = '600 15px system-ui, sans-serif';
+  ctx.fillText(car.name, w - 218, h - 48);
+  ctx.fillStyle = '#ffd54f';
+  ctx.font = '700 17px system-ui, sans-serif';
+  ctx.fillText(Math.round(Math.abs(car.speed) * 0.42) + ' km/j', w - 218, h - 24);
+  const hp = Math.max(0, car.health) / 100;
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.fillRect(w - 92, h - 32, 66, 7);
+  ctx.fillStyle = hp > 0.4 ? '#66bb6a' : '#ef5350';
+  ctx.fillRect(w - 92, h - 32, 66 * hp, 7);
 }
 
-/** Greedy word wrap for banner text. */
-function wrapText(ctx, text, maxWidth) {
+function wrapText(ctx, text, maxW) {
   const words = text.split(' ');
   const lines = [];
   let line = '';
   for (const word of words) {
-    const test = line ? `${line} ${word}` : word;
-    if (ctx.measureText(test).width > maxWidth && line) { lines.push(line); line = word; }
+    const test = line ? line + ' ' + word : word;
+    if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = word; }
     else line = test;
   }
   if (line) lines.push(line);
   return lines;
 }
 
-/** A dim full-screen overlay with a big word and a few lines under it. */
-function overlay(ctx, view, title, titleColor, lines) {
-  ctx.fillStyle = 'rgba(8,10,16,0.66)';
-  ctx.fillRect(0, 0, view.w, view.h);
-  ctx.textAlign = 'center';
-  ctx.fillStyle = titleColor;
-  ctx.font = `bold 64px ${FONT}`;
-  ctx.fillText(title, view.w / 2, view.h / 2 - 30);
-  ctx.fillStyle = '#ffffff';
-  ctx.font = `17px ${FONT}`;
-  lines.forEach((line, i) => ctx.fillText(line, view.w / 2, view.h / 2 + 16 + i * 26));
+function drawDialogue(ctx, state, w) {
+  const d = state.dialogues[0];
+  if (!d) return;
+  ctx.font = '14px system-ui, sans-serif';
+  const lines = wrapText(ctx, d.text, 600).slice(0, 2);
+  const bw = 660, bh = 30 + lines.length * 19;
+  const x = (w - bw) / 2, y = 14;
+  ctx.fillStyle = 'rgba(14,20,24,0.85)';
+  ctx.beginPath();
+  ctx.roundRect(x, y, bw, bh, 10);
+  ctx.fill();
+  ctx.fillStyle = '#ffd54f';
+  ctx.font = '700 14px system-ui, sans-serif';
+  const label = d.who + ': ';
+  ctx.fillText(label, x + 16, y + 24);
+  const off = ctx.measureText(label).width;
+  ctx.fillStyle = '#f5efe0';
+  ctx.font = '14px system-ui, sans-serif';
+  lines.forEach((ln, i) => {
+    ctx.fillText(ln, x + 16 + (i === 0 ? off : 0), y + 24 + i * 19);
+  });
 }
 
-/** Draw the non-play screens (title, pause, busted, wasted). */
-export function drawScreen(ctx, state, view, screen) {
-  const save = state.save;
-  if (screen === SCREEN_TITLE) {
-    const grad = ctx.createLinearGradient(0, 0, 0, view.h);
-    grad.addColorStop(0, 'rgba(255,140,66,0.30)');
-    grad.addColorStop(1, 'rgba(10,16,28,0.60)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, view.w, view.h);
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#ffd94d';
-    ctx.font = `bold 84px ${FONT}`;
-    ctx.fillText(GAME_TITLE, view.w / 2, view.h * 0.34);
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `20px ${FONT}`;
-    ctx.fillText(`${CITY_NAME} — kota pantai, utang lama, dan satu nama: ${HERO_NAME}.`, view.w / 2, view.h * 0.34 + 42);
-    ctx.font = `16px ${FONT}`;
-    const lines = [
-      'WASD / Panah — jalan & menyetir    •    E — masuk / curi mobil    •    Shift — lari',
-      'Spasi — pukul    •    Klik mouse — tembak    •    P / Esc — jeda',
-      save.missionIndex > 0 || save.money !== 120
-        ? `Karier tersimpan: $${save.money} • misi cerita ${Math.min(save.missionIndex, 3)}/3`
-        : 'Selesaikan 3 misi cerita untuk melunasi utang Riko ke geng Arus Liar.',
-      '',
-      'Klik atau tekan Enter untuk mulai',
-    ];
-    lines.forEach((line, i) => ctx.fillText(line, view.w / 2, view.h * 0.52 + i * 28));
-  } else if (screen === SCREEN_PAUSED) {
-    overlay(ctx, view, 'JEDA', '#ffffff', ['P / Esc / Enter — lanjut main', 'Progres tersimpan otomatis di browser ini.']);
-  } else if (screen === SCREEN_BUSTED) {
-    overlay(ctx, view, 'BUSTED', '#4d7cff', ['Polisi Sundara Bay menangkap Riko.', 'Sebagian uang disita. Tekan Enter untuk lanjut dari kontrakan.']);
-  } else if (screen === SCREEN_WASTED) {
-    overlay(ctx, view, 'WASTED', PALETTE.danger, ['Riko terbangun di Klinik Pesisir.', 'Biaya perawatan dipotong dari uangnya. Tekan Enter untuk lanjut.']);
-  }
+function drawObjectives(ctx, state, w, h) {
+  const story = state.missions.storyObjective(state);
+  const side = state.missions.sideObjective(state);
+  let y = h - 40;
+  if (side) { drawObjectivePill(ctx, state, side, w, y, '#4dd0e1'); y -= 34; }
+  drawObjectivePill(ctx, state, story, w, y, '#ffca28');
+}
+
+function drawObjectivePill(ctx, state, obj, w, y, color) {
+  ctx.font = '600 13.5px system-ui, sans-serif';
+  const tw = ctx.measureText(obj.text).width;
+  const bw = tw + 42;
+  const x = (w - bw) / 2;
+  ctx.fillStyle = 'rgba(14,20,24,0.8)';
+  ctx.beginPath();
+  ctx.roundRect(x, y - 17, bw, 27, 13);
+  ctx.fill();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x + 16, y - 3.5, 4.5 + Math.sin(state.time * 5) * 1.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#f5efe0';
+  ctx.fillText(obj.text, x + 28, y + 1);
+}
+
+function drawBustMeter(ctx, state, w, h) {
+  const bw = 300, x = (w - bw) / 2, y = h - 96;
+  ctx.fillStyle = 'rgba(14,20,24,0.8)';
+  ctx.beginPath();
+  ctx.roundRect(x - 10, y - 24, bw + 20, 48, 10);
+  ctx.fill();
+  ctx.fillStyle = '#ef9a9a';
+  ctx.font = '700 13px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('DITANGKAP…', w / 2, y - 8);
+  ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  ctx.fillRect(x, y + 2, bw, 9);
+  ctx.fillStyle = '#e53935';
+  ctx.fillRect(x, y + 2, bw * state.bust, 9);
+  ctx.textAlign = 'left';
+}
+
+function drawMinimap(ctx, state) {
+  const mw = 188, mh = 140, x = state.view.w - mw - 14, y = 14;
+  const s = Math.min(mw / WORLD_W, mh / WORLD_H);
+  const ox = x + (mw - WORLD_W * s) / 2, oy = y + (mh - WORLD_H * s) / 2;
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(x, y, mw, mh, 10);
+  ctx.clip();
+  ctx.fillStyle = '#14535e';
+  ctx.fillRect(x, y, mw, mh);
+  ctx.fillStyle = '#7fae56';
+  ctx.fillRect(ox, oy, BEACH_X * s, WORLD_H * s);
+  ctx.fillStyle = '#e8cf8d';
+  ctx.fillRect(ox + BEACH_X * s, oy, (SEA_X - BEACH_X) * s, WORLD_H * s);
+  ctx.fillStyle = '#2b93a5';
+  ctx.fillRect(ox + SEA_X * s, oy, (WORLD_W - SEA_X) * s, WORLD_H * s);
+  ctx.strokeStyle = 'rgba(245,240,220,0.75)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (const rx of ROADS_V) { ctx.moveTo(ox + rx * s, oy); ctx.lineTo(ox + rx * s, oy + WORLD_H * s); }
+  for (const ry of ROADS_H) { ctx.moveTo(ox, oy + ry * s); ctx.lineTo(ox + BEACH_X * s, oy + ry * s); }
+  ctx.stroke();
+  // Blip objektif cerita (emas) & sampingan (cyan).
+  const story = state.missions.storyObjective(state);
+  if (!story.noMarker) blip(ctx, ox + story.x * s, oy + story.y * s, '#ffca28', 4 + Math.sin(state.time * 5) * 1.1);
+  const side = state.missions.sideObjective(state);
+  if (side) blip(ctx, ox + side.x * s, oy + side.y * s, '#4dd0e1', 3.5);
+  for (const cop of state.police) blip(ctx, ox + cop.x * s, oy + cop.y * s, '#42a5f5', 3.2);
+  // Pemain: titik putih bercincin gelap + arah hadap.
+  const p = state.player;
+  const px = ox + (p.car ? p.car.x : p.x) * s, py = oy + (p.car ? p.car.y : p.y) * s;
+  const ang = p.car ? p.car.angle : p.angle;
+  ctx.strokeStyle = '#f5efe0';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(px, py);
+  ctx.lineTo(px + Math.cos(ang) * 9, py + Math.sin(ang) * 9);
+  ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(px, py, 4.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#10222a';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // Label kota, di dalam peta dengan ruang cukup.
+  ctx.fillStyle = 'rgba(10,25,30,0.55)';
+  ctx.fillRect(x + 5, y + mh - 19, 76, 14);
+  ctx.fillStyle = '#eaf6f6';
+  ctx.font = '700 9px system-ui, sans-serif';
+  ctx.fillText('SUNDARA BAY', x + 9, y + mh - 8.5);
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(255,235,190,0.35)';
+  ctx.beginPath();
+  ctx.roundRect(x, y, mw, mh, 10);
+  ctx.stroke();
+}
+
+function blip(ctx, x, y, color, r) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawTitle(ctx, state) {
+  const w = state.view.w, h = state.view.h;
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, 'rgba(30,16,4,0.30)');
+  g.addColorStop(0.55, 'rgba(30,16,4,0.18)');
+  g.addColorStop(1, 'rgba(30,16,4,0.55)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffca28';
+  ctx.font = '800 66px Georgia, serif';
+  ctx.fillText('SUNDARA HEAT', w / 2, h * 0.34);
+  ctx.fillStyle = '#fdf6e0';
+  ctx.font = 'italic 19px Georgia, serif';
+  ctx.fillText('Sundara Bay — kota pantai, utang lama, dan satu nama: Riko.', w / 2, h * 0.34 + 40);
+  ctx.font = '15.5px system-ui, sans-serif';
+  ctx.fillStyle = 'rgba(253,246,224,0.95)';
+  ctx.fillText('WASD / Panah — jalan & menyetir   ·   E — masuk / curi mobil   ·   Shift — lari', w / 2, h * 0.34 + 92);
+  ctx.fillText('Spasi — pukul   ·   Klik mouse — tembak   ·   P / Esc — jeda', w / 2, h * 0.34 + 118);
+  ctx.fillText('Selesaikan 3 misi cerita untuk melunasi utang Riko ke geng Arus Liar.', w / 2, h * 0.34 + 144);
+  ctx.fillStyle = '#ffca28';
+  ctx.font = '700 17px system-ui, sans-serif';
+  ctx.fillText('Klik atau tekan Enter untuk mulai', w / 2, h * 0.34 + 186);
+  ctx.textAlign = 'left';
+}
+
+function drawPause(ctx, state) {
+  const w = state.view.w, h = state.view.h;
+  ctx.fillStyle = 'rgba(10,14,18,0.55)';
+  ctx.fillRect(0, 0, w, h);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#fdf6e0';
+  ctx.font = '800 44px Georgia, serif';
+  ctx.fillText('JEDA', w / 2, h / 2 - 16);
+  ctx.font = '15px system-ui, sans-serif';
+  ctx.fillText('P / Esc — lanjut   ·   E — masuk mobil   ·   Spasi — pukul   ·   Klik — tembak', w / 2, h / 2 + 22);
+  ctx.textAlign = 'left';
+}
+
+function drawEndScreen(ctx, state, title, line, tint) {
+  const w = state.view.w, h = state.view.h;
+  ctx.fillStyle = tint;
+  ctx.globalAlpha = 0.45;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '800 52px Georgia, serif';
+  ctx.fillText(title, w / 2, h / 2 - 10);
+  ctx.font = '16px system-ui, sans-serif';
+  ctx.fillText(line, w / 2, h / 2 + 28);
+  ctx.textAlign = 'left';
 }
