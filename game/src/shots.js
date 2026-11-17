@@ -56,7 +56,7 @@ export function stageShot(name, state) {
     police.stars = 3;
     return {
       screen: SCREEN_PLAY,
-      seconds: 2.2,
+      seconds: 1.7,
       drive() {
         const ctl = idleControl();
         ctl.held.up = true;
@@ -68,23 +68,27 @@ export function stageShot(name, state) {
     // On foot, a few steps from Bu Ratna's warung, package marker glowing,
     // townsfolk on the sidewalk and traffic rolling past.
     const warung = state.city.places['Warung Bu Ratna'];
-    player.x = warung.x - 90;
+    player.x = warung.x - 70;
     player.y = warung.y + 46;
     player.angle = 0.4;
     missions.startMission(missions.story[0]);
     return {
       screen: SCREEN_PLAY,
-      seconds: 1.6,
+      seconds: 0.8,
       drive() {
         const ctl = idleControl();
-        ctl.move = { x: 0.8, y: 0.2 };
+        ctl.move = { x: 0.55, y: 0.15 };
         return ctl;
       },
     };
   }
   if (name === 'beach') {
     // Golden hour on the sand: Riko beside his parked pickup, sea behind,
-    // the city skyline across the frame, no heat at all.
+    // the city skyline across the frame, no heat at all. Clear the story
+    // mission createGame auto-started, so no banner or objective intrudes.
+    missions.current = null;
+    missions.banner = '';
+    missions.bannerTime = 0;
     player.x = 3030;
     player.y = 700;
     player.angle = Math.PI / 2.4;

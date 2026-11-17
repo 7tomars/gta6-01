@@ -19,17 +19,17 @@ function drawMinimap(ctx, state, view) {
   const y0 = 14;
   const sx = MAP_W / WORLD.width;
   const sy = MAP_H / WORLD.height;
-  ctx.fillStyle = 'rgba(20,26,20,0.82)';
+  ctx.fillStyle = 'rgba(24,42,44,0.88)';
   ctx.beginPath(); ctx.roundRect(x0, y0, MAP_W, MAP_H, 8); ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
   ctx.stroke();
   ctx.save();
   ctx.beginPath(); ctx.roundRect(x0, y0, MAP_W, MAP_H, 8); ctx.clip();
-  ctx.fillStyle = '#2c7a3f';
+  ctx.fillStyle = '#35924e';
   ctx.fillRect(x0 + WORLD.beachX * sx, y0, (WORLD.waterX - WORLD.beachX) * sx, MAP_H);
   ctx.fillStyle = '#1299ad';
   ctx.fillRect(x0 + WORLD.waterX * sx, y0, MAP_W, MAP_H);
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
   ctx.lineWidth = 2;
   ctx.beginPath();
   for (const x of ROADS.vertical) { ctx.moveTo(x0 + x * sx, y0); ctx.lineTo(x0 + x * sx, y0 + MAP_H); }
@@ -39,14 +39,14 @@ function drawMinimap(ctx, state, view) {
     ctx.fillStyle = color;
     ctx.beginPath(); ctx.arc(x0 + x * sx, y0 + y * sy, r, 0, Math.PI * 2); ctx.fill();
   };
-  for (const cop of state.police.cars) blip(cop.x, cop.y, Math.floor(state.time * 4) % 2 ? '#ff3b30' : '#4d7cff', 3);
-  for (const car of state.cars) if (car.storyTarget && !car.dead) blip(car.x, car.y, '#ffd21f', 3.5);
+  for (const cop of state.police.cars) blip(cop.x, cop.y, Math.floor(state.time * 4) % 2 ? '#ff3b30' : '#4d7cff', 3.5);
+  for (const car of state.cars) if (car.storyTarget && !car.dead) blip(car.x, car.y, '#ffd21f', 4);
   const s = state.missions.stage();
   if (s) {
-    const pulse = 3.5 + Math.sin(state.time * 6) * 1.2;
+    const pulse = 4 + Math.sin(state.time * 6) * 1.2;
     blip(s.x, s.y, PALETTE.gold, pulse);
   }
-  blip(state.player.x, state.player.y, '#ffffff', 4);
+  blip(state.player.x, state.player.y, '#ffffff', 4.5);
   ctx.restore();
   ctx.fillStyle = '#ffffff';
   ctx.font = `bold 10px ${FONT}`;
@@ -165,8 +165,8 @@ export function drawScreen(ctx, state, view, screen) {
   const save = state.save;
   if (screen === SCREEN_TITLE) {
     const grad = ctx.createLinearGradient(0, 0, 0, view.h);
-    grad.addColorStop(0, 'rgba(255,140,66,0.35)');
-    grad.addColorStop(1, 'rgba(10,16,28,0.78)');
+    grad.addColorStop(0, 'rgba(255,140,66,0.30)');
+    grad.addColorStop(1, 'rgba(10,16,28,0.60)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, view.w, view.h);
     ctx.textAlign = 'center';

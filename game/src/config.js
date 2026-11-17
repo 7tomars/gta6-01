@@ -72,8 +72,8 @@ export const CAR = {
 /** Wanted tuning: crime points needed per star, and how fast heat fades unseen. */
 export const WANTED = {
   maxStars: 5,
-  decayDelay: 6,
-  decayRate: 0.09,
+  decayDelay: 5,
+  decayRate: 0.045,
   bustTime: 1.6,
 };
 
