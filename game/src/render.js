@@ -21,6 +21,30 @@ export function drawWorld(ctx, state) {
   for (const ped of state.peds) drawPed(ctx, state, ped, view);
   if (!state.player.car) drawPlayer(ctx, state, view);
   drawParticles(ctx, state, view);
+  if (state.mode === 'play' && state.missions) drawObjectiveMarkers(ctx, state, view);
+}
+
+// Penanda objektif di dunia: cincin berdenyut emas (cerita) / cyan (sampingan).
+function drawObjectiveMarkers(ctx, state, view) {
+  const story = state.missions.storyObjective(state);
+  if (story && !story.noMarker) marker(ctx, story.x - view.x, story.y - view.y, '#ffca28', state.time);
+  const side = state.missions.sideObjective(state);
+  if (side) marker(ctx, side.x - view.x, side.y - view.y, '#4dd0e1', state.time);
+}
+
+function marker(ctx, x, y, color, t) {
+  const pulse = Math.sin(t * 5) * 4;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(x, y, 20 + pulse, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.save();
+  ctx.translate(x, y - 34 - pulse);
+  ctx.rotate(Math.PI / 4);
+  ctx.fillRect(-6, -6, 12, 12);
+  ctx.restore();
 }
 
 function inView(view, x, y, w, h) {
