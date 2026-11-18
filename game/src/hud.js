@@ -33,7 +33,7 @@ export function drawHud(ctx, state) {
 function drawVignette(ctx, w, h) {
   const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.42, w / 2, h / 2, Math.max(w, h) * 0.78);
   g.addColorStop(0, 'rgba(70,35,0,0)');
-  g.addColorStop(1, 'rgba(70,35,0,0.17)');
+  g.addColorStop(1, 'rgba(70,35,0,0.08)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
 }
@@ -236,12 +236,14 @@ function blip(ctx, x, y, color, r) {
 function drawTitle(ctx, state) {
   const w = state.view.w, h = state.view.h;
   const g = ctx.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, 'rgba(30,16,4,0.30)');
-  g.addColorStop(0.55, 'rgba(30,16,4,0.18)');
-  g.addColorStop(1, 'rgba(30,16,4,0.55)');
+  g.addColorStop(0, 'rgba(30,16,4,0.07)');
+  g.addColorStop(0.55, 'rgba(30,16,4,0.03)');
+  g.addColorStop(1, 'rgba(30,16,4,0.14)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
   ctx.textAlign = 'center';
+  ctx.shadowColor = 'rgba(70,35,0,0.45)';
+  ctx.shadowBlur = 8;
   ctx.fillStyle = '#ffca28';
   ctx.font = '800 66px Georgia, serif';
   ctx.fillText('SUNDARA HEAT', w / 2, h * 0.34);
@@ -256,6 +258,7 @@ function drawTitle(ctx, state) {
   ctx.fillStyle = '#ffca28';
   ctx.font = '700 17px system-ui, sans-serif';
   ctx.fillText('Klik atau tekan Enter untuk mulai', w / 2, h * 0.34 + 186);
+  ctx.shadowBlur = 0;
   ctx.textAlign = 'left';
 }
 
