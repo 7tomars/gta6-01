@@ -10,7 +10,22 @@ export function setupShot(state, name) {
   switch (name) {
     case 'cover': {
       state.mode = 'title';
-      state.shotCam = { x: 1740, y: 1260 };
+      // Bingkai kartu pos: blok kota warna-warni, jalan pantai, pasir + tepi laut se-frame.
+      state.shotCam = { x: 2850, y: 1240 };
+      // Melati GT emas diparkir di jalan pantai sebagai mobil pahlawan.
+      const gt = state.allCars.find(c => c.isMissionCar);
+      if (gt) { gt.x = 2700; gt.y = 1000; gt.angle = -Math.PI / 2; gt.speed = 0; gt.parked = true; }
+      // Tiga pejalan kaki jalan-jalan menyusuri pasir.
+      const spots = [
+        { x: 3130, y: 1080, tx: 3130, ty: 1420 },
+        { x: 3200, y: 1400, tx: 3200, ty: 1060 },
+        { x: 3100, y: 900, tx: 3100, ty: 1250 },
+      ];
+      state.peds.slice(0, 3).forEach((p, i) => {
+        const s = spots[i]; if (!p || !s) return;
+        p.beach = true; p.state = 'walk';
+        p.x = s.x; p.y = s.y; p.target = { x: s.tx, y: s.ty };
+      });
       state.shotDelay = 1.0;
       break;
     }
